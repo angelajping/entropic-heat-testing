@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Read 3x 10k NTC thermistors from a LabJack T4 (AIN0, AIN1, AIN2) and log to CSV.
+Read cell voltage on AIN0 and 10k NTC thermistors on AIN1 and AIN2 and log to CSV.
 
 Circuit (per channel):
     VS ──── 5kΩ ──┬── NTC ──── GND
@@ -67,9 +67,14 @@ R_FIXED = 5000     # fixed resistor in the divider (ohms)
 V_SUPPLY = 4.94
 V_SUPPLY_CHANNEL = None     # e.g. "AIN3"
 
-# ── Sensors ─────────────────────────────────────────────────────
+# ── Cell Voltage ─────────────────────────────────────────────────────
+V_CELL_CHANNEL = "AIN0"  
+V_CELL_MIN = 3.0            # datasheet lower limit (V)
+V_CELL_MAX = 4.35           # datasheet upper limit (V)
+# just to help check values make sense
+
+# ── Thermistors ─────────────────────────────────────────────────────
 SENSORS = [
-    ("Calorimetery Ambient Sensor", "AIN0"), 
     ("Cell Body Sensor           ", "AIN1"),
     ("Cell Tab Sensor            ", "AIN2"),
 ]
@@ -89,6 +94,7 @@ FAULT_FRACTION = 0.005
 R_INPUT = 1.3e6             # HV input impedance, ohms (datasheet typical)
 V_INPUT_BIAS = 1.4          # voltage a floating HV input settles to
 
+LABEL_W = 28                # console column width for channel names. pretty much only for looks.
 
 def voltage_to_resistance(v_ain, v_supply, r_input=None):
     """Convert measured voltage to NTC resistance (low-side divider).
@@ -147,7 +153,7 @@ def read_averaged(handle, channels, n):
 
 
 def build_csv_header(labels):
-    header = ["timestamp", "elapsed_s"]
+    header = ["timestamp", "elapsed_s", "cell_voltage_v", "cell_voltage_status"]
     for label in labels:
         s = slug(label)
         header += [f"{s}_volts", f"{s}_ohms", f"{s}_temp_c", f"{s}_status"]
@@ -157,8 +163,8 @@ def build_csv_header(labels):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Log 3x NTC thermistors from a LabJack T4 to CSV.")
-    default_name = f"discharge_ntc_log_v3_{datetime.now():%m%d_%H%M%S}.csv"
+    p = argparse.ArgumentParser(description="Log cell voltage and NTC thermistors from a LabJack T4 to CSV.")
+    default_name = f"dvdt_log_{datetime.now():%m%d_%H%M%S}.csv"
     p.add_argument("-o", "--csv", default=default_name, help=f"output CSV path (default: {default_name})")
     p.add_argument("-i", "--interval", type=float, default=INTERVAL_S, help="seconds between readings")
     p.add_argument("-d", "--duration", type=float, default=None, help="stop after N seconds (default: run until Ctrl-C)")
@@ -176,7 +182,8 @@ def main():
 
     labels = [label for label, _ in SENSORS]
     channels = [ch for _, ch in SENSORS]
-    read_list = channels + ([V_SUPPLY_CHANNEL] if V_SUPPLY_CHANNEL else [])
+    # Read order: cell voltage, thermistors, supply voltage (if measured)
+    read_list = [V_CELL_CHANNEL] + channels + ([V_SUPPLY_CHANNEL] if V_SUPPLY_CHANNEL else [])
     r_input = R_INPUT if args.compensate_input_z else None
 
     handle = ljm.openS("T4", args.connection, args.identifier)
@@ -194,6 +201,7 @@ def main():
 
         configure_ain(handle, read_list)
 
+        print(f"Cell voltage on {V_CELL_CHANNEL}")
         if V_SUPPLY_CHANNEL:
             print(f"Measuring V_SUPPLY on {V_SUPPLY_CHANNEL}")
         else:
@@ -202,6 +210,8 @@ def main():
             print(f"Input-impedance compensation ON ({R_INPUT/1e6:.1f} MΩ / {V_INPUT_BIAS:.1f} V model)")
 
         mode = "a" if args.append else "w"
+        # if you run w/ --append, opens the file in append mode, adds new rows @ the end. 
+        # Otherwise, it opens in write mode, which creates the file or overwrites its existing contents.
         write_header = not (args.append and _has_content(args.csv))
 
         with open(args.csv, mode, newline="", encoding="utf-8") as f:
@@ -210,10 +220,10 @@ def main():
                 writer.writerow(build_csv_header(labels))
                 f.flush()
 
-            print(f"Logging {len(SENSORS)} thermistors every {args.interval}s to {args.csv}  "
+            print(f"Logging cell voltage and {len(SENSORS)} thermistors every {args.interval}s to {args.csv}  "
                   f"(Ctrl-C to stop)\n")
             if not args.quiet:
-                print(f"{'Channel':<12} {'Voltage':>9} {'R (Ω)':>10} {'Temp (°C)':>10}")
+                print(f"{'Channel':<{LABEL_W}} {'Voltage':>9} {'R (Ω)':>10} {'Temp (°C)':>10}")
                 print("-" * 45)
 
             rows = 0
@@ -232,21 +242,31 @@ def main():
                         time.sleep(args.interval)
                         continue
 
-                    voltages = values[:len(channels)]
+                    v_cell = values[0]
+                    voltages = values[1:1 + len(channels)]
                     v_supply = values[-1] if V_SUPPLY_CHANNEL else V_SUPPLY
 
-                    row = [datetime.now().isoformat(timespec="milliseconds"), round(elapsed, 3)]
+                    cell_ok = V_CELL_MIN <= v_cell <= V_CELL_MAX
+                    cell_status = "OK" if cell_ok else "OUT_OF_RANGE"
+
+                    row = [datetime.now().isoformat(timespec="milliseconds"), round(elapsed, 3),
+                           round(v_cell, 5), cell_status]
+                    if not args.quiet:
+                        flag = "" if cell_ok else " <-- OUT OF RANGE"
+                        print(f"{'Cell Voltage':<{LABEL_W}} {v_cell:>8.4f}V{flag}")
+
+                    
                     for label, v in zip(labels, voltages):
                         r = voltage_to_resistance(v, v_supply, r_input)
                         if r is None:
                             row += [round(v, 5), "", "", "FAULT"]
                             if not args.quiet:
-                                print(f"{label:<12} {v:>8.4f}V {'FAULT':>10} {'---':>10}")
+                                print(f"{label:<{LABEL_W}} {v:>8.4f}V {'FAULT':>10} {'---':>10}")
                         else:
                             t_c = resistance_to_temp_c(r)
                             row += [round(v, 5), round(r, 1), round(t_c, 3), "OK"]
                             if not args.quiet:
-                                print(f"{label:<12} {v:>8.4f}V {r:>9.1f}Ω {t_c:>9.2f}°C")
+                                print(f"{label:<{LABEL_W}} {v:>8.4f}V {r:>9.1f}Ω {t_c:>9.2f}°C")
                     if V_SUPPLY_CHANNEL:
                         row.append(round(v_supply, 5))
 
@@ -282,6 +302,7 @@ if __name__ == "__main__":
     main()
 
 
+# PREV YR NOTES
 # Charging at 02:00:30
 # calorimetery_ambient: 24.55
 # cell_body: 24.80

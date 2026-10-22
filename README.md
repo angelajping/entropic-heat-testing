@@ -1,5 +1,5 @@
 # entropic-heat-testing
-Measures the entropic heating coefficient (dV/dT, Bernardi's coefficient) of a single cell at different SOC (states of charge). OCV is measured at different chamber temperatures for each SOC. The slope of OCV vs. temperature then gives dV/dT.
+Measures the entropic heating coefficient (dV/dT, Bernardi's coefficient) of a single cell at different SOC (states of charge). OCV is measured at different chamber temperatures for each SOC. The slope of OCV vs. temperature then gives dV/dT. Code created for Labjack T4. 
 
 ## Channels
 AIN0	- Cell voltage (OCV)	- Wired directly to the cell
@@ -45,26 +45,16 @@ cell_voltage_status	OK, or OUT_OF_RANGE if outside 3.0-4.35 V
 # Test Procedures:
 
 1	Attach the NTC thermistor to the cell surface and route the harness and thermistor wires so they can exit the oven/thermal chamber without stressing the cell. Connect the cell to the RIGOL and the LabJack.
-
-2	Set SOC (see charging procedure) at 25 C to 95%. 	
-
-3	Turn off the RIGOL (make cell open circuit) and rest at 25 C until values are stable. (Wait around 1hr to establish stability)	
-
-4   Record stable voltage and temperature as the OCV at 25 C for this SOC. 	
-
-5	Increase oven/thermal chamber temperature by an increment of 10 C while keeping the cell at open circuit. 	
-
-6	Wait until values are stable, then record final stable voltage and temperature. (Wait around 1hr to establish stability)	
-
-7	Place the cell in the Thermal Chamber at 35 C	
-
-8	Repeat steps 1-7, decreasing the SOC by 5%. (E.g., the SOCs you will be measuring are 95%, 90%, 85%,... 5%) 	
-
+2	Set SOC (see charging procedure) at 25 C to 100%. (25 C is room temperature) 	
+3	Turn off the RIGOL (make cell open circuit) and rest at 25 C until values are stable. (Wait around 1hr to establish stability after discharging)
+4	Record stable voltage and temperature as the OCV at 25 C for this SOC. (Start script, record for ~3min, stop script)	
+5	Set oven/thermal chamber temperature to 35 C, once it has reached 35 C, place cell inside while keeping the cell at open circuit. 	
+6	Wait until thermal equilibrium (around 7min) then record final stable voltage and temperature. (Start script, record for ~3min, stop script)	
+7	Take cell out of oven/thermal chamber and decrease the SOC by 5% (101.7s = 1 min and 41.7 sec to discharge 5% at 20 Amps)	
+8	Repeat steps 1-7 for the SOC values 95%, 90%, 85%,... 5%	
 9	Disassemble the test setup with care. Return all materials	
-
 10	Take the data, create an excel spreadsheet and for each SOC, fit OCV vs temperature. 
-
-11  Take the dV/dT values for each SOC and plot dV/dT vs. SOC. 
+Take the dV/dT values for each SOC and plot dV/dT vs. SOC. 
 
 # data needed to collect
 - temperature of cell
